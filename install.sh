@@ -7,60 +7,34 @@ plain='\033[0m'
 
 cur_dir=$(pwd)
 
-# ---- Разбор входных аргументов ----
-ENABLE_XRAY=false
-ENABLE_HYSTERIA2=false
-NODE_ID=""
-
-for arg in "$@"; do
-  case "$arg" in
-    --xray)
-      ENABLE_XRAY=true
-      shift
-      ;;
-    --hysteria2)
-      ENABLE_HYSTERIA2=true
-      shift
-      ;;
-    --[0-9]*)
-      NODE_ID="${arg#--}"
-      shift
-      ;;
-    *)
-      echo -e "${red}Неизвестный параметр: $arg${plain}"
-      exit 1
-      ;;
-  esac
-done
-# ---- конец разбора аргументов ----
-
 # check root
 [[ $EUID -ne 0 ]] && echo -e "${red}错误：${plain} 必须使用root用户运行此脚本！\n" && exit 1
 
 # check os
 if [[ -f /etc/redhat-release ]]; then
     release="centos"
-elif grep -Eqi "alpine" /etc/issue 2>/dev/null; then
+elif cat /etc/issue | grep -Eqi "alpine"; then
     release="alpine"
-elif grep -Eqi "debian" /etc/issue 2>/dev/null; then
+elif cat /etc/issue | grep -Eqi "debian"; then
     release="debian"
-elif grep -Eqi "ubuntu" /etc/issue 2>/dev/null; then
+elif cat /etc/issue | grep -Eqi "ubuntu"; then
     release="ubuntu"
-elif grep -Eqi "centos|red hat|redhat|rocky|alma|oracle linux" /etc/issue 2>/dev/null; then
+elif cat /etc/issue | grep -Eqi "centos|red hat|redhat|rocky|alma|oracle linux"; then
     release="centos"
-elif grep -Eqi "debian" /proc/version 2>/dev/null; then
+elif cat /proc/version | grep -Eqi "debian"; then
     release="debian"
-elif grep -Eqi "ubuntu" /proc/version 2>/dev/null; then
+elif cat /proc/version | grep -Eqi "ubuntu"; then
     release="ubuntu"
-elif grep -Eqi "centos|red hat|redhat|rocky|alma|oracle linux" /proc/version 2>/dev/null; then
+elif cat /proc/version | grep -Eqi "centos|red hat|redhat|rocky|alma|oracle linux"; then
     release="centos"
-elif grep -Eqi "arch" /proc/version 2>/dev/null; then
+elif cat /proc/version | grep -Eqi "arch"; then
     release="arch"
 else
     echo -e "${red}未检测到系统版本，请联系脚本作者！${plain}\n" && exit 1
 fi
 
 arch=$(uname -m)
+
 if [[ $arch == "x86_64" || $arch == "x64" || $arch == "amd64" ]]; then
     arch="64"
 elif [[ $arch == "aarch64" || $arch == "arm64" ]]; then
@@ -74,8 +48,8 @@ fi
 
 echo "架构: ${arch}"
 
-if [ "$(getconf WORD_BIT)" != '32' ] && [ "$(getconf LONG_BIT)" != '64' ]; then
-    echo "本软件不支持 32 位系统(x86)，请使用 64 位系统(x86_64)。"
+if [ "$(getconf WORD_BIT)" != '32' ] && [ "$(getconf LONG_BIT)" != '64' ] ; then
+    echo "本软件不支持 32 位系统(x86)，请使用 64 位系统(x86_64)，如果检测有误，请联系作者"
     exit 2
 fi
 
@@ -92,7 +66,7 @@ if [[ x"${release}" == x"centos" ]]; then
         echo -e "${red}请使用 CentOS 7 或更高版本的系统！${plain}\n" && exit 1
     fi
     if [[ ${os_version} -eq 7 ]]; then
-        echo -e "${yellow}注意： CentOS 7 无法使用 hysteria1/2 协议！${plain}\n"
+        echo -e "${red}注意： CentOS 7 无法使用hysteria1/2协议！${plain}\n"
     fi
 elif [[ x"${release}" == x"ubuntu" ]]; then
     if [[ ${os_version} -lt 16 ]]; then
@@ -105,29 +79,26 @@ elif [[ x"${release}" == x"debian" ]]; then
 fi
 
 install_base() {
-    case "$release" in
-      centos)
+    if [[ x"${release}" == x"centos" ]]; then
         yum install epel-release wget curl unzip tar crontabs socat ca-certificates -y
         update-ca-trust force-enable
-        ;;
-      alpine)
+    elif [[ x"${release}" == x"alpine" ]]; then
         apk add wget curl unzip tar socat ca-certificates
         update-ca-certificates
-        ;;
-      debian)
+    elif [[ x"${release}" == x"debian" ]]; then
         apt-get update -y
         apt install wget curl unzip tar cron socat ca-certificates -y
         update-ca-certificates
-        ;;
-      ubuntu)
+    elif [[ x"${release}" == x"ubuntu" ]]; then
         apt-get update -y
-        apt install wget curl unzip tar cron socat ca-certificates -y
+        apt install wget curl unzip tar cron socat -y
+        apt-get install ca-certificates wget -y
         update-ca-certificates
-        ;;
-      arch)
-        pacman -Sy --noconfirm --needed wget curl unzip tar cron socat ca-certificates
-        ;;
-    esac
+    elif [[ x"${release}" == x"arch" ]]; then
+        pacman -Sy
+        pacman -S --noconfirm --needed wget curl unzip tar cron socat
+        pacman -S --noconfirm --needed ca-certificates wget
+    fi
 }
 
 # 0: running, 1: not running, 2: not installed
@@ -137,89 +108,447 @@ check_status() {
     fi
     if [[ x"${release}" == x"alpine" ]]; then
         temp=$(service V2bX status | awk '{print $3}')
-        [[ x"${temp}" == x"started" ]] && return 0 || return 1
+        if [[ x"${temp}" == x"started" ]]; then
+ add_node_config() {
+    local core_type=$1
+    local NodeID=$2
+    local ApiHost=$3
+    local ApiKey=$4
+
+    if [ "$core_type" == "--xray" ]; then
+        core="xray"
+        core_xray=true
+        NodeType="vless"
+    elif [ "$core_type" == "--hysteria2" ]; then
+        core="hysteria2"
+        core_hysteria2=true
+        NodeType="hysteria2"
     else
-        temp=$(systemctl status V2bX | grep Active | awk '{print $3}' | tr -d '()')
-        [[ x"${temp}" == x"running" ]] && return 0 || return 1
+        echo "无效的核心类型。请选择 --xray 或 --hysteria2。"
+        exit 1
+    fi
+
+    if [[ ! "$NodeID" =~ ^[0-9]+$ ]]; then
+        echo "错误：NodeID 必须为正整数。"
+        exit 1
+    fi
+
+    fastopen=true
+    if [ "$NodeType" == "hysteria2" ]; then
+        fastopen=false
+        istls="y"
+    fi
+
+    certmode="none"
+    certdomain="example.com"
+    if [[ "$istls" == "y" || "$istls" == "Y" ]]; then
+        certmode="http"
+        read -rp "请输入节点证书域名(example.com)：" certdomain
+    fi
+
+    ipv6_support=$(check_ipv6_support)
+    listen_ip="0.0.0.0"
+    if [ "$ipv6_support" -eq 1 ]; then
+        listen_ip="::"
+    fi
+
+    node_config=""
+    if [ "$core" == "xray" ]; then
+        node_config=$(cat <<EOF
+{
+    "Core": "$core",
+    "ApiHost": "$ApiHost",
+    "ApiKey": "$ApiKey",
+    "NodeID": $NodeID,
+    "NodeType": "$NodeType",
+    "Timeout": 30,
+    "ListenIP": "0.0.0.0",
+    "SendIP": "0.0.0.0",
+    "DeviceOnlineMinTraffic": 200,
+    "EnableProxyProtocol": false,
+    "EnableUot": true,
+    "EnableTFO": true,
+    "DNSType": "UseIPv4",
+    "CertConfig": {
+        "CertMode": "$certmode",
+        "RejectUnknownSni": false,
+        "CertDomain": "$certdomain",
+        "CertFile": "/etc/V2bX/fullchain.cer",
+        "KeyFile": "/etc/V2bX/cert.key",
+        "Email": "v2bx@github.com",
+        "Provider": "cloudflare",
+        "DNSEnv": {
+            "EnvName": "env1"
+        }
+    }
+}
+EOF
+)
+    elif [ "$core" == "hysteria2" ]; then
+        node_config=$(cat <<EOF
+{
+    "Core": "$core",
+    "ApiHost": "$ApiHost",
+    "ApiKey": "$ApiKey",
+    "NodeID": $NodeID,
+    "NodeType": "$NodeType",
+    "Hysteria2ConfigPath": "/etc/V2bX/hy2config.yaml",
+    "Timeout": 30,
+    "ListenIP": "",
+    "SendIP": "0.0.0.0",
+    "DeviceOnlineMinTraffic": 200,
+    "CertConfig": {
+        "CertMode": "$certmode",
+        "RejectUnknownSni": false,
+        "CertDomain": "$certdomain",
+        "CertFile": "/etc/V2bX/fullchain.cer",
+        "KeyFile": "/etc/V2bX/cert.key",
+        "Email": "v2bx@github.com",
+        "Provider": "cloudflare",
+        "DNSEnv": {
+            "EnvName": "env1"
+        }
+    }
+}
+EOF
+)
+    fi
+    nodes_config+=("$node_config")
+}
+
+generate_config_file() {
+    local core_type=$1
+    local NodeID=$2
+    local ApiHost=$3
+    local ApiKey=$4
+
+    nodes_config=()
+    core_xray=false
+    core_hysteria2=false
+
+    add_node_config "$core_type" "$NodeID" "$ApiHost" "$ApiKey"
+
+    # Initialize cores config
+    cores_config="["
+    if [ "$core_xray" = true ]; then
+        cores_config+="
+    {
+        \"Type\": \"xray\",
+        \"Log\": {
+            \"Level\": \"error\",
+            \"ErrorPath\": \"/etc/V2bX/error.log\"
+        },
+        \"OutboundConfigPath\": \"/etc/V2bX/custom_outbound.json\",
+        \"RouteConfigPath\": \"/etc/V2bX/route.json\"
+    },"
+    fi
+    if [ "$core_hysteria2" = true ]; then
+        cores_config+="
+    {
+        \"Type\": \"hysteria2\",
+        \"Log\": {
+            \"Level\": \"error\"
+        }
+    },"
+    fi
+    cores_config+="]"
+    cores_config=$(echo "$cores_config" | sed 's/},]$/}]/')
+
+    cd /etc/V2bX
+    mv config.json config.json.bak 2>/dev/null || true
+    nodes_config_str="${nodes_config[*]}"
+    formatted_nodes_config="${nodes_config_str%,}"
+
+    cat <<EOF > /etc/V2bX/config.json
+{
+    "Log": {
+        "Level": "error",
+        "Output": ""
+    },
+    "Cores": $cores_config,
+    "Nodes": [$formatted_nodes_config]
+}
+EOF
+
+    cat <<EOF > /etc/V2bX/custom_outbound.json
+[
+    {
+        "tag": "IPv4_out",
+        "protocol": "freedom",
+        "settings": {
+            "domainStrategy": "UseIPv4v6"
+        }
+    },
+    {
+        "tag": "IPv6_out",
+        "protocol": "freedom",
+        "settings": {
+            "domainStrategy": "UseIPv6"
+        }
+    },
+    {
+        "protocol": "blackhole",
+        "tag": "block"
+    }
+]
+EOF
+
+    cat <<EOF > /etc/V2bX/route.json
+{
+    "domainStrategy": "AsIs",
+    "rules": [
+        {
+            "outboundTag": "block",
+            "ip": [
+                "geoip:private"
+            ]
+        },
+        {
+            "outboundTag": "block",
+            "domain": [
+                "regexp:(api|ps|sv|offnavi|newvector|ulog.imap|newloc)(.map|).(baidu|n.shifen).com",
+                "regexp:(.+.|^)(360|so).(cn|com)",
+                "regexp:(Subject|HELO|SMTP)",
+                "regexp:(torrent|.torrent|peer_id=|info_hash|get_peers|find_node|BitTorrent|announce_peer|announce.php?passkey=)",
+                "regexp:(^.@)(guerrillamail|guerrillamailblock|sharklasers|grr|pokemail|spam4|bccto|chacuo|027168).(info|biz|com|de|net|org|me|la)",
+                "regexp:(.?)(xunlei|sandai|Thunder|XLLiveUD)(.)",
+                "regexp:(..||)(dafahao|mingjinglive|botanwang|minghui|dongtaiwang|falunaz|epochtimes|ntdtv|falundafa|falungong|wujieliulan|zhengjian).(org|com|net)",
+                "regexp:(ed2k|.torrent|peer_id=|announce|info_hash|get_peers|find_node|BitTorrent|announce_peer|announce.php?passkey=|magnet:|xunlei|sandai|Thunder|XLLiveUD|bt_key)",
+                "regexp:(.+.|^)(360).(cn|com|net)",
+                "regexp:(.*.||)(guanjia.qq.com|qqpcmgr|QQPCMGR)",
+                "regexp:(.*.||)(rising|kingsoft|duba|xindubawukong|jinshanduba).(com|net|org)",
+                "regexp:(.*.||)(netvigator|torproject).(com|cn|net|org)",
+                "regexp:(..||)(visa|mycard|gash|beanfun|bank).",
+                "regexp:(.*.||)(gov|12377|12315|talk.news.pts.org|creaders|zhuichaguoji|efcc.org|cyberpolice|aboluowang|tuidang|epochtimes|zhengjian|110.qq|mingjingnews|inmediahk|xinsheng|breakgfw|chengmingmag|jinpianwang|qi-gong|mhradio|edoors|renminbao|soundofhope|xizang-zhiye|bannedbook|ntdtv|12321|secretchina|dajiyuan|boxun|chinadigitaltimes|dwnews|huaglad|oneplusnews|epochweekly|cn.rfi).(cn|com|org|net|club|net|fr|tw|hk|eu|info|me)",
+                "regexp:(.*.||)(miaozhen|cnzz|talkingdata|umeng).(cn|com)",
+                "regexp:(.*.||)(mycard).(com|tw)",
+                "regexp:(.*.||)(gash).(com|tw)",
+                "regexp:(.bank.)",
+                "regexp:(.*.||)(pincong).(rocks)",
+                "regexp:(.*.||)(taobao).(com)",
+                "regexp:(.*.||)(laomoe|jiyou|ssss|lolicp|vv1234|0z|4321q|868123|ksweb|mm126).(com|cloud|fun|cn|gs|xyz|cc)",
+                "regexp:(flows|miaoko).(pages).(dev)"
+            ]
+        },
+        {
+            "outboundTag": "block",
+            "ip": [
+                "127.0.0.1/32",
+                "10.0.0.0/8",
+                "fc00::/7",
+                "fe80::/10",
+                "172.16.0.0/12"
+            ]
+        },
+        {
+            "outboundTag": "block",
+            "protocol": [
+                "bittorrent"
+            ]
+        },
+        {
+            "outboundTag": "IPv4_out",
+            "network": "udp,tcp"
+        }
+    ]
+}
+EOF
+
+    if [ "$core_hysteria2" = true ]; then
+        cat <<EOF > /etc/V2bX/hy2config.yaml
+quic:
+  initStreamReceiveWindow: 8388608
+  maxStreamReceiveWindow: 8388608
+  initConnReceiveWindow: 20971520
+  maxConnReceiveWindow: 20971520
+  maxIdleTimeout: 30s
+  maxIncomingStreams: 1024
+  disablePathMTUDiscovery: false
+ignoreClientBandwidth: false
+disableUDP: false
+udpIdleTimeout: 60s
+resolver:
+  type: system
+acl:
+  inline:
+    - direct(geosite:google)
+    - reject(geosite:cn)
+    - reject(geoip:cn)
+masquerade:
+  type: 404
+EOF
+    fi
+
+    echo -e "${green}V2bX 配置文件生成完成,正在重新启动服务${plain}"
+    if [[ x"${release}" == x"alpine" ]]; then
+        service V2bX restart
+    else
+        systemctl restart V2bX
     fi
 }
 
 install_V2bX() {
-    local node_id="$1"
-    local enable_xray="$2"
-    local enable_hysteria2="$3"
+    local version=$1
+    local core_type=""
+    local node_id=""
+    local api_host=""
+    local api_key=""
 
-    # удаляем старую установку
-    [[ -d /usr/local/V2bX/ ]] && rm -rf /usr/local/V2bX/
-    mkdir -p /usr/local/V2bX/ && cd /usr/local/V2bX/
+    # Parse command-line arguments
+    while [[ $# -gt 0 ]]; do
+        case $1 in
+            --xray|--hysteria2)
+                core_type="$1"
+                shift
+                ;;
+            --[0-9]*)
+                node_id="${1/--/}"
+                shift
+                ;;
+            --api)
+                api_host="$2"
+                shift 2
+                ;;
+            --apikey)
+                api_key="$2"
+                shift 2
+                ;;
+            *)
+                version="$1"
+                shift
+                ;;
+        esac
+    done
 
-    # получение и распаковка V2bX
-    if [[ $# -eq 0 ]]; then
-        last_version=$(curl -Ls "https://api.github.com/repos/wyx2685/V2bX/releases/latest" \
-          | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
-        echo "检测到 V2bX 最新版本：${last_version}"
-        url="https://github.com/wyx2685/V2bX/releases/download/${last_version}/V2bX-linux-${arch}.zip"
+    if [[ -e /usr/local/V2bX/ ]]; then
+        rm -rf /usr/local/V2bX/
+    fi
+
+    mkdir /usr/local/V2bX/ -p
+    cd /usr/local/V2bX/
+
+    if [[ -z "$version" ]]; then
+        last_version=$(curl -Ls "https://api.github.com/repos/wyx2685/V2bX/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
+        if [[ ! -n "$last_version" ]]; then
+            echo -e "${red}检测 V2bX 版本失败，可能是超出 Github API 限制，请稍后再试，或手动指定 V2bX 版本安装${plain}"
+            exit 1
+        fi
+        echo -e "检测到 V2bX 最新版本：${last_version}，开始安装"
+        wget -q -N --no-check-certificate -O /usr/local/V2bX/V2bX-linux.zip https://github.com/wyx2685/V2bX/releases/download/${last_version}/V2bX-linux-${arch}.zip
     else
-        last_version="$node_id"
+        last_version=$version
         url="https://github.com/wyx2685/V2bX/releases/download/${last_version}/V2bX-linux-${arch}.zip"
-        echo "开始安装 V2bX ${last_version}"
+        echo -e "开始安装 V2bX $version"
+        wget -q -N --no-check-certificate -O /usr/local/V2bX/V2bX-linux.zip ${url}
     fi
 
-    wget -q -N --no-check-certificate -O V2bX-linux.zip "$url" \
-      || { echo -e "${red}下载失败${plain}"; exit 1; }
-    unzip -o V2bX-linux.zip && rm -f V2bX-linux.zip
+    if [[ $? -ne 0 ]]; then
+        echo -e "${red}下载 V2bX 失败，请确保你的服务器能够下载 Github 的文件${plain}"
+        exit 1
+    fi
+
+    unzip V2bX-linux.zip
+    rm V2bX-linux.zip -f
     chmod +x V2bX
-    mkdir -p /etc/V2bX/
-    cp geoip.dat geosite.dat /etc/V2bX/
+    mkdir /etc/V2bX/ -p
+    cp geoip.dat /etc/V2bX/
+    cp geosite.dat /etc/V2bX/
 
-    # Опциональная установка Xray/Hysteria2
-    if [[ "$enable_xray" == true ]]; then
-        echo "🔧 Устанавливаем Xray..."
-        # здесь ваш код по установке Xray
-    fi
-    if [[ "$enable_hysteria2" == true ]]; then
-        echo "🔧 Устанавливаем Hysteria2..."
-        # здесь ваш код по установке Hysteria2
-    fi
-
-    # настройка systemd/openrc
     if [[ x"${release}" == x"alpine" ]]; then
+        rm /etc/init.d/V2bX -f
         cat <<EOF > /etc/init.d/V2bX
 #!/sbin/openrc-run
-name="V2bX"; description="V2bX"
-command="/usr/local/V2bX/V2bX"; command_args="server"
-command_user="root"; pidfile="/run/V2bX.pid"; command_background="yes"
-depend() { need net; }
+
+name="V2bX"
+description="V2bX"
+
+command="/usr/local/V2bX/V2bX"
+command_args="server"
+command_user="root"
+
+pidfile="/run/V2bX.pid"
+command_background="yes"
+
+depend() {
+        need net
+}
 EOF
         chmod +x /etc/init.d/V2bX
         rc-update add V2bX default
     else
-        wget -q -N --no-check-certificate \
-          -O /etc/systemd/system/V2bX.service \
-          https://raw.githubusercontent.com/wyx2685/V2bX-script/master/V2bX.service
+        rm /etc/systemd/system/V2bX.service -f
+        file="https://github.com/wyx2685/V2bX-script/raw/master/V2bX.service"
+        wget -q -N --no-check-certificate -O /etc/systemd/system/V2bX.service ${file}
         systemctl daemon-reload
+        systemctl stop V2bX
         systemctl enable V2bX
     fi
 
-    # копирование дефолтных конфигов, запуск сервиса
-    cp -n config.json dns.json route.json custom_outbound.json custom_inbound.json /etc/V2bX/
-    curl -o /usr/bin/V2bX -Ls https://raw.githubusercontent.com/wyx2685/V2bX-script/master/V2bX.sh
-    chmod +x /usr/bin/V2bX && ln -sf /usr/bin/V2bX /usr/bin/v2bx
+    echo -e "${green}V2bX ${last_version}${plain} 安装完成，已设置开机自启"
 
-    # старт/рестарт
-    if [[ x"${release}" == x"alpine" ]]; then
-        service V2bX start
+    if [[ -n "$core_type" && -n "$node_id" && -n "$api_host" && -n "$api_key" ]]; then
+        cp config.json /etc/V2bX/ 2>/dev/null || true
+        cp dns.json /etc/V2bX/ 2>/dev/null || true
+        cp route.json /etc/V2bX/ 2>/dev/null || true
+        cp custom_outbound.json /etc/V2bX/ 2>/dev/null || true
+        cp custom_inbound.json /etc/V2bX/ 2>/dev/null || true
+        generate_config_file "$core_type" "$node_id" "$api_host" "$api_key"
     else
-        systemctl restart V2bX
+        if [[ ! -f /etc/V2bX/config.json ]]; then
+            cp config.json /etc/V2bX/
+            echo -e ""
+            echo -e "全新安装，请先参看教程：https://v2bx.v-50.me/，配置必要的内容"
+            first_install=true
+        else
+            if [[ x"${release}" == x"alpine" ]]; then
+                service V2bX start
+            else
+                systemctl start V2bX
+            fi
+            sleep 2
+            check_status
+            if [[ $? == 0 ]]; then
+                echo -e "${green}V2bX 重启成功${plain}"
+            else
+                echo -e "${red}V2bX 可能启动失败，请稍后使用 V2bX log 查看日志信息，若无法启动，则可能更改了配置格式，请前往 wiki 查看：https://github.com/V2bX-project/V2bX/wiki${plain}"
+            fi
+            first_install=false
+        fi
+        cp dns.json /etc/V2bX/ 2>/dev/null || true
+        cp route.json /etc/V2bX/ 2>/dev/null || true
+        cp custom_outbound.json /etc/V2bX/ 2>/dev/null || true
+        cp custom_inbound.json /etc/V2bX/ 2>/dev/null || true
     fi
-    sleep 2 && check_status
-    status=$?
-    [[ $status -eq 0 ]] && echo -e "${green}V2bX 启动成功${plain}" || echo -e "${red}V2bX 启动失败${plain}"
 
-    cd "$cur_dir"
+    curl -o /usr/bin/V2bX -Ls https://raw.githubusercontent.com/wyx2685/V2bX-script/master/V2bX.sh
+    chmod +x /usr/bin/V2bX
+    if [ ! -L /usr/bin/v2bx ]; then
+        ln -s /usr/bin/V2bX /usr/bin/v2bx
+        chmod +x /usr/bin/v2bx
+    fi
+    cd $cur_dir
     rm -f install.sh
+    echo -e ""
+    echo "V2bX 管理脚本使用方法 (兼容使用V2bX执行，大小写不敏感): "
+    echo "------------------------------------------"
+    echo "V2bX              - 显示管理菜单 (功能更多)"
+    echo "V2bX start        - 启动 V2bX"
+    echo "V2bX stop         - 停止 V2bX"
+    echo "V2bX restart      - 重启 V2bX"
+    echo "V2bX status       - 查看 V2bX 状态"
+    echo "V2bX enable       - 设置 V2bX 开机自启"
+    echo "V2bX disable      - 取消 V2bX 开机自启"
+    echo "V2bX log          - 查看 V2bX 日志"
+    echo "V2bX x25519       - 生成 x25519 密钥"
+    echo "V2bX generate     - 生成 V2bX 配置文件"
+    echo "V2bX update       - 更新 V2bX"
+    echo "V2bX update x.x.x - 更新 V2bX 指定版本"
+    echo "V2bX install      - 安装 V2bX"
+    echo "V2bX uninstall    - 卸载 V2bX"
+    echo "V2bX version      - 查看 V2bX 版本"
+    echo "------------------------------------------"
 }
 
 echo -e "${green}开始安装${plain}"
 install_base
-install_V2bX "$NODE_ID" "$ENABLE_XRAY" "$ENABLE_HYSTERIA2"
+install_V2bX "$@"
