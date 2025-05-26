@@ -482,7 +482,7 @@ install_V2bX() {
     if [[ -z "$version" ]]; then
         last_version=$(curl -Ls "https://api.github.com/repos/wyx2685/V2bX/releases/latest" | grep '"tag_name":' | sed -E 's/.*"([^"]+)".*/\1/')
         if [[ ! -n "$last_version" ]]; then
-            echo -e "${red}检测 V2bX 版本失败，可能是超出 Github API 限制，请稍后再试，或手动指定 V2bX 版本安装${plain}"
+            echo -e "${red}检测 V2bX 版本失败，可能是超出 Github API 限制，请稍后再试，或手动 указать V2bX 版本安装${plain}"
             exit 1
         fi
         echo -e "检测到 V2bX 最新版本：${last_version}，开始安装"
@@ -495,7 +495,7 @@ install_V2bX() {
     fi
 
     if [[ $? -ne 0 ]]; then
-        echo -e "${red}下载 V2bX 失败，请确保你的服务器能够 скачать файлы с Github${plain}"
+        echo -e "${red}下载 V2bX 失败，请确保 ваш сервер может скачать файлы с Github${plain}"
         exit 1
     fi
 
@@ -538,6 +538,7 @@ EOF
 
     echo -e "${green}V2bX ${last_version}${plain} 安装完成，已设置开机自启"
 
+    # Handle configuration based on arguments
     if [[ -n "$core_type" && -n "$node_id" && -n "$api_host" && -n "$api_key" ]]; then
         cp config.json /etc/V2bX/ 2>/dev/null || true
         cp dns.json /etc/V2bX/ 2>/dev/null || true
@@ -546,6 +547,7 @@ EOF
         cp custom_inbound.json /etc/V2bX/ 2>/dev/null || true
         generate_config_file "$core_type" "$node_id" "$api_host" "$api_key"
     else
+        # Default behavior if no arguments are provided
         if [[ ! -f /etc/V2bX/config.json ]]; then
             cp config.json /etc/V2bX/
             echo -e ""
