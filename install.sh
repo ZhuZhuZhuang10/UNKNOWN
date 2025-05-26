@@ -166,7 +166,11 @@ add_node_config() {
     certdomain="example.com"
     if [[ "$istls" == "y" || "$istls" == "Y" ]]; then
         certmode="http"
-        read -rp "请输入节点证书域名(example.com)：" certdomain
+        # Allow user to override default certdomain if desired
+        read -rp "请输入节点证书域名(默认: example.com)：" input_certdomain
+        if [[ -n "$input_certdomain" ]]; then
+            certdomain="$input_certdomain"
+        fi
         if [[ -z "$certdomain" ]]; then
             echo -e "${red}错误：证书域名不能为空！${plain}"
             exit 1
