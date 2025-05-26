@@ -109,7 +109,30 @@ check_status() {
     if [[ x"${release}" == x"alpine" ]]; then
         temp=$(service V2bX status | awk '{print $3}')
         if [[ x"${temp}" == x"started" ]]; then
- add_node_config() {
+            return 0
+        else
+            return 1
+        fi
+    else
+        temp=$(systemctl status V2bX | grep Active | awk '{print $3}' | cut -d "(" -f2 | cut -d ")" -f1)
+        if [[ x"${temp}" == x"running" ]]; then
+            return 0
+        else
+            return 1
+        fi
+    fi
+}
+
+# Check IPv6 support
+check_ipv6_support() {
+    if ip -6 addr | grep -q "inet6"; then
+        echo "1"
+    else
+        echo "0"
+    fi
+}
+
+add_node_config() {
     local core_type=$1
     local NodeID=$2
     local ApiHost=$3
@@ -124,12 +147,12 @@ check_status() {
         core_hysteria2=true
         NodeType="hysteria2"
     else
-        echo "无效的核心类型。请选择 --xray 或 --hysteria2。"
+        echo -e "${red}无效的核心类型。请选择 --xray 或 --hysteria2。${plain}"
         exit 1
     fi
 
     if [[ ! "$NodeID" =~ ^[0-9]+$ ]]; then
-        echo "错误：NodeID 必须为正整数。"
+        echo -e "${red}错误：NodeID 必须为正整数。${plain}"
         exit 1
     fi
 
@@ -144,6 +167,10 @@ check_status() {
     if [[ "$istls" == "y" || "$istls" == "Y" ]]; then
         certmode="http"
         read -rp "请输入节点证书域名(example.com)：" certdomain
+        if [[ -z "$certdomain" ]]; then
+            echo -e "${red}错误：证书域名不能为空！${plain}"
+            exit 1
+        fi
     fi
 
     ipv6_support=$(check_ipv6_support)
@@ -228,7 +255,6 @@ generate_config_file() {
 
     add_node_config "$core_type" "$NodeID" "$ApiHost" "$ApiKey"
 
-    # Initialize cores config
     cores_config="["
     if [ "$core_xray" = true ]; then
         cores_config+="
@@ -254,7 +280,7 @@ generate_config_file() {
     cores_config+="]"
     cores_config=$(echo "$cores_config" | sed 's/},]$/}]/')
 
-    cd /etc/V2bX
+    cd /etc/V2bX || { echo -e "${red}无法切换到 /etc/V2bX 目录！${plain}"; exit 1; }
     mv config.json config.json.bak 2>/dev/null || true
     nodes_config_str="${nodes_config[*]}"
     formatted_nodes_config="${nodes_config_str%,}"
@@ -379,7 +405,7 @@ masquerade:
 EOF
     fi
 
-    echo -e "${green}V2bX 配置文件生成完成,正在重新启动服务${plain}"
+    echo -e "${green}V2bX 配置文件生成完成,正在 перезапускаем службу${plain}"
     if [[ x"${release}" == x"alpine" ]]; then
         service V2bX restart
     else
@@ -388,11 +414,14 @@ EOF
 }
 
 install_V2bX() {
-    local version=$1
+    local version=""
     local core_type=""
     local node_id=""
     local api_host=""
     local api_key=""
+
+    # Debug output for arguments
+    echo -e "${yellow}Полученные аргументы: $@${plain}"
 
     # Parse command-line arguments
     while [[ $# -gt 0 ]]; do
@@ -406,19 +435,42 @@ install_V2bX() {
                 shift
                 ;;
             --api)
-                api_host="$2"
-                shift 2
+                if [[ -n "$2" && "$2" != --* ]]; then
+                    api_host="$2"
+                    shift 2
+                else
+                    echo -e "${red}Ошибка: --api требует URL (например, https://core2.bibihy.top)${plain}"
+                    exit 1
+                fi
                 ;;
             --apikey)
-                api_key="$2"
-                shift 2
+                if [[ -n "$2" && "$2" != --* ]]; then
+                    api_key="$2"
+                    shift 2
+                else
+                    echo -e "${red}Ошибка: --apikey требует значение ключа${plain}"
+                    exit 1
+                fi
                 ;;
             *)
-                version="$1"
-                shift
+                if [[ "$1" != --* ]]; then
+                    version="$1"
+                    shift
+                else
+                    echo -e "${red}Неизвестный аргумент: $1${plain}"
+                    exit 1
+                fi
                 ;;
         esac
     done
+
+    # Validate arguments
+    if [[ -n "$core_type" && -n "$node_id" && -n "$api_host" && -n "$api_key" ]]; then
+        echo -e "${yellow}Параметры: core_type=$core_type, node_id=$node_id, api_host=$api_host, api_key=$api_key${plain}"
+    elif [[ -n "$core_type" || -n "$node_id" || -n "$api_host" || -n "$api_key" ]]; then
+        echo -e "${red}Ошибка: Необходимо указать все параметры (--xray или --hysteria2, --<nodeid>, --api, --apikey)${plain}"
+        exit 1
+    fi
 
     if [[ -e /usr/local/V2bX/ ]]; then
         rm -rf /usr/local/V2bX/
@@ -443,7 +495,7 @@ install_V2bX() {
     fi
 
     if [[ $? -ne 0 ]]; then
-        echo -e "${red}下载 V2bX 失败，请确保你的服务器能够下载 Github 的文件${plain}"
+        echo -e "${red}下载 V2bX 失败，请确保你的服务器能够 скачать файлы с Github${plain}"
         exit 1
     fi
 
