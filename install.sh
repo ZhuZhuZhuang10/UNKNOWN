@@ -13,7 +13,7 @@ cur_dir=$(pwd)
 # check os
 if [[ -f /etc/redhat-release ]]; then
     release="centos"
-elif cat /etc/issue | grep -Eqi "alpine"; then
+elif cat /etc/issue | grep -Eqi "alpine"; thenv
     release="alpine"
 elif cat /etc/issue | grep -Eqi "debian"; then
     release="debian"
@@ -165,16 +165,8 @@ add_node_config() {
     certmode="none"
     certdomain="example.com"
     if [[ "$istls" == "y" || "$istls" == "Y" ]]; then
-        certmode="http"
-        # Allow user to override default certdomain if desired
-        read -rp "请输入节点证书域名(默认: example.com)：" input_certdomain
-        if [[ -n "$input_certdomain" ]]; then
-            certdomain="$input_certdomain"
-        fi
-        if [[ -z "$certdomain" ]]; then
-            echo -e "${red}错误：证书域名不能为空！${plain}"
-            exit 1
-        fi
+        certmode="self"
+        certdomain="example.com"
     fi
 
     ipv6_support=$(check_ipv6_support)
